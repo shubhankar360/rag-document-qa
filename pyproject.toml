@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+# Put the repo root on sys.path. `python -m pytest` adds the working directory
+# implicitly, but a bare `pytest` does not — without this the suite passes
+# locally and fails in CI with ModuleNotFoundError.
+pythonpath = ["."]
+testpaths = ["tests"]
