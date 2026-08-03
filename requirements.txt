@@ -1,0 +1,13 @@
+# Core pipeline — the only hard requirements.
+numpy>=1.24
+scikit-learn>=1.3
+
+# Tests
+pytest>=7.4
+
+# Optional extras, each enabling one thing:
+#   anthropic>=0.40             generation via Claude (falls back to extractive without it)
+#   sentence-transformers>=2.6  real neural embeddings instead of the offline LSA default
+#   pypdf>=4.0                  PDF ingestion
+#   fastapi[standard]>=0.110    the HTTP API in serve.py
+#   streamlit>=1.30             the chat UI in app_streamlit.py
