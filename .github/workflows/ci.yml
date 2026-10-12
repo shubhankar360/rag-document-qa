@@ -1,0 +1,87 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install -r requirements.txt "fastapi[standard]"
+      - run: pytest -q
+      # The CLI runs end to end with no credentials. If that ever stops being
+      # true, the offline story is broken and CI should say so.
+      - run: python cli.py sample_docs "how long is raw event data retained?"
+
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/gcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t rag-qa .
+      - name: smoke test the image the way Cloud Run will run it
+        run: |
+          docker run -d -p 8080:8080 -e PORT=8080 --name rag rag-qa
+          for i in $(seq 1 30); do curl -fsS localhost:8080/health && break; sleep 1; done
+          curl -fsS localhost:8080/ask -H 'content-type: application/json' \
+            -d '{"question": "how long is raw event data retained?"}' | tee ask.json
+          grep -q '"grounded":true' ask.json
+          # indexing over HTTP must stay off in the published image
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/index \
+            -H 'content-type: application/json' -d '{"path": "/etc/passwd"}')" = 403
+          test "$(docker exec rag id -u)" != 0
+          docker image inspect rag-qa --format 'image size: {{.Size}} bytes'
+
+  deploy:
+    # Runs only after `terraform apply` and once the repo variables it prints
+    # are set (Settings > Secrets and variables > Actions > Variables).
+    if: github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != ''
+    needs: [test, terraform, container]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/rag-document-qa/rag-document-qa:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
+      - run: docker build -t "$IMAGE" . && docker push "$IMAGE"
+      - id: run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: rag-document-qa
+          region: ${{ vars.GCP_REGION }}
+          image: ${{ env.IMAGE }}
+      - name: check the live service answers
+        run: |
+          curl -fsS "${{ steps.run.outputs.url }}/health"
+          curl -fsS "${{ steps.run.outputs.url }}/ask" -H 'content-type: application/json' \
+            -d '{"question": "how long is raw event data retained?"}' | grep -q '"grounded":true'

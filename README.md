@@ -148,9 +148,53 @@ curl -s localhost:8000/ask -H 'content-type: application/json' \
   -d '{"question": "how long is raw event data retained?"}'
 ```
 
-`GET /health` reports chunk count and the resolved backends; `POST /index` takes
-a path; `POST /ask` returns the answer, whether it was grounded, and the
-citations.
+`GET /health` reports chunk count and the resolved backends; `POST /ask` returns
+the answer, whether it was grounded, and the citations. `POST /index` is off
+unless you start the server with `--index-root <dir>`, and then it only accepts
+paths inside that directory (see below for why).
+
+### Deploy to Google Cloud Run
+
+The container indexes `sample_docs` at startup (point `DOCS_PATH` elsewhere for
+your own documents) and serves the API on `$PORT`. It runs as a non-root user,
+scales to zero when idle, and `max_instances` (2 by default) caps the bill.
+
+```bash
+cd deploy/gcp
+cp terraform.tfvars.example terraform.tfvars    # set project_id
+terraform init && terraform apply               # registry, service, identities, keyless CI auth
+terraform output github_variables               # add these four as GitHub repo variables
+```
+
+After that, every push to `main` runs the tests, validates the Terraform,
+smoke-tests the image, then builds, pushes and deploys it and checks that the
+live URL answers a question. GitHub Actions authenticates through Workload
+Identity Federation, so there is no service-account key stored anywhere, and
+only this repo's `main` branch can deploy. The deployer can push to one image
+repository and update one service; it has no project-wide roles.
+
+To use Claude in the deployed service, apply with `enable_claude = true` and add
+the key straight to Secret Manager, so it never passes through Terraform state:
+
+```bash
+printf %s "$ANTHROPIC_API_KEY" | gcloud secrets versions add anthropic-api-key --data-file=-
+```
+
+Two things I found while putting this on the internet:
+
+- **`POST /index` was a file-read hole.** It indexed any path on the server.
+  Harmless on localhost; deployed, anyone could index `/etc/passwd`, ask about
+  it, and get the contents back as cited excerpts. Indexing over HTTP is now
+  opt-in and confined to one directory, with `../`, absolute paths and
+  symlinks rejected. CI checks that the published image returns 403 for it.
+- **A one-chunk corpus crashed the offline embedder.** The character n-gram
+  vectoriser requires each term to appear in at least two chunks, which is
+  impossible with one, so a short single-paragraph upload failed. Fixed, with a
+  regression test.
+
+Terraform also ignores the service's image after the first apply. CI owns
+deploys; without that, the next `terraform apply` would quietly roll the live
+service back to the bootstrap image.
 
 ### Chat UI
 
@@ -212,6 +256,8 @@ ragqa/
   api.py         FastAPI adapter (imported lazily)
 cli.py           terminal Q&A, one-shot or interactive
 serve.py         run the HTTP API
+Dockerfile       the image Cloud Run serves
+deploy/gcp/      Terraform: Cloud Run, Artifact Registry, Secret Manager, keyless CI auth
 app_streamlit.py chat UI
 sample_docs/     three documents to try it against
 tests/           65 tests — chunking, retrieval, grounding, answering, end to end
