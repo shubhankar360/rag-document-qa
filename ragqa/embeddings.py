@@ -49,6 +49,9 @@ class LsaEmbedder:
         self._fitted = False
 
     def fit_transform(self, texts: list[str]) -> np.ndarray:
+        # min_df=2 on character n-grams drops noise on a real corpus, but with a
+        # single chunk no term can appear twice and sklearn refuses to fit.
+        self._vectorizer.set_params(char__min_df=2 if len(texts) > 1 else 1)
         sparse = self._vectorizer.fit_transform(texts)
         self._svd.n_components = max(1, min(self._n_components, min(sparse.shape) - 1))
         dense = self._svd.fit_transform(sparse)
