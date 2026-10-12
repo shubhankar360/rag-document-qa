@@ -1,12 +1,12 @@
 # rag-document-qa
 
-**Answers questions about your documents, cites the passage each answer came
-from, and refuses when the documents don't contain one.**
+Ask it a question about your documents and it answers with a citation to the
+passage the answer came from, or tells you the documents don't say.
 
-A complete retrieval-augmented generation service — loading, recursive chunking
-with overlap, embedding, vector search, a groundedness guard, context assembly,
-and citation-carrying answers — behind a CLI, a FastAPI service and a Streamlit
-chat UI.
+It's a complete retrieval-augmented generation service (loading, recursive
+chunking with overlap, embedding, vector search, a groundedness guard, context
+assembly and cited answers) behind a CLI, a FastAPI service and a Streamlit chat
+UI, and it deploys to Google Cloud Run.
 
 Runs offline on a clean checkout: **no API key, no model download, no vector
 database.** Add an Anthropic key and generation upgrades to Claude; the pipeline
@@ -31,7 +31,7 @@ Sources:
 ## The part most RAG demos skip
 
 A RAG system that always answers is a RAG system that confabulates. Retrieval
-returns *something* for every query — ask a support-docs index who won the 1998
+returns *something* for every query. Ask a support-docs index who won the 1998
 World Cup and it will hand the model three passages about billing, and the model
 will write a confident paragraph out of them. **The guard has to run before
 generation**, and getting it right here took measurement rather than a default.
@@ -45,12 +45,12 @@ below some threshold. Measured on this repo's own sample documents:
 | "what is the airspeed velocity of an unladen swallow" (nonsense) | **0.907** |
 
 **The nonsense question scores higher.** Normalising against the corpus doesn't
-rescue it either — the top hit's z-margin over the corpus mean spans 1.12–1.78
+rescue it either: the top hit's z-margin over the corpus mean spans 1.12–1.78
 for on-topic questions and 0.97–1.48 for off-topic ones, which overlap. The
 cause is that character-n-gram TF-IDF plus SVD largely encodes generic English
 text structure, so every query looks broadly similar to every chunk.
 
-What does separate them is **vocabulary coverage** — asking a lexical question
+What does separate them is **vocabulary coverage**, which asks a lexical question
 lexically: do this question's content words appear in the indexed corpus at all?
 
 | | on-topic (8 queries) | off-topic (6 queries) |
@@ -62,7 +62,7 @@ directions so `refund` matches `refunds` and `retained` matches `retention`
 without pulling in a stemmer.
 
 Both query sets are checked in as parametrised tests (`tests/test_grounding.py`),
-along with a test that **fails if cosine scores ever become discriminative** —
+along with a test that **fails if cosine scores ever become discriminative**,
 so if a future embedder change makes the simpler guard viable, the suite says so
 instead of leaving the lexical one in place forever.
 
@@ -75,8 +75,8 @@ question  → coverage guard → refuse, or
           → retrieve top-k → number the passages → generate → answer + citations
 ```
 
-**Chunking** splits on the strongest structural boundary that fits — paragraph,
-then line, then sentence, then clause, then word — and only hard-cuts when a
+**Chunking** splits on the strongest structural boundary that fits (paragraph,
+then line, then sentence, then clause, then word) and only hard-cuts when a
 single span exceeds the limit with no separator left. Every chunk keeps its
 source and character offsets, which is what lets a citation point at an exact
 span rather than a whole file. Overlap carries context across boundaries so a
@@ -88,11 +88,11 @@ with real offsets, so every claim is traceable to text you can go read.
 
 **Generation** is an interface with two implementations. `ClaudeAnswerer` calls
 the Anthropic Messages API with a system prompt that restricts the model to the
-supplied sources and requires inline citations — and checks `stop_reason` before
+supplied sources and requires inline citations, and checks `stop_reason` before
 reading the response, since a refusal comes back as a successful HTTP 200 with
 no text. `ExtractiveAnswerer` is the zero-dependency fallback: it returns the
 sentences that best cover the question, with their source markers intact. It is
-not a language model and doesn't pretend to be one — it exists so the retrieval
+not a language model and doesn't pretend to be one. It exists so the retrieval
 half is verifiable end to end without credentials.
 
 ## Two bugs the tests now pin
@@ -102,7 +102,7 @@ which is why each has a regression test named after the behaviour:
 
 - **Sentences were being truncated at line breaks.** Source documents are
   hard-wrapped, so splitting the raw text line by line cut *"...valid for twenty
-  four hours"* at `twenty` — the answer was retrieved correctly and then
+  four hours"* at `twenty`: the answer was retrieved correctly and then
   destroyed on the way out. Whitespace is now collapsed before sentence
   splitting.
 - **Ranking by term density promoted short sentences.** *"Create an API key under
@@ -120,7 +120,7 @@ pip install -r requirements.txt
 
 python cli.py sample_docs "how long is raw event data retained?"
 python cli.py sample_docs               # interactive
-pytest -q                               # 65 tests, no network
+pytest -q                               # 69 tests, no network
 ```
 
 Every extra is optional and each enables exactly one thing:
@@ -219,7 +219,7 @@ for citation in answer.citations:
     print(citation.marker, citation.source, citation.score, citation.start, citation.end)
 ```
 
-Swap any stage — every one is an argument, not a hard-coded import:
+Swap any stage; every one is an argument, not a hard-coded import:
 
 ```python
 from ragqa import ClaudeAnswerer, RagPipeline, VectorStore
@@ -239,7 +239,7 @@ pipeline = RagPipeline(
 | `chunk_chars` | 900 | Smaller isolates facts but strips context; larger pads the prompt with irrelevant text you pay for |
 | `chunk_overlap` | 150 | Insurance against a fact landing on a chunk boundary |
 | `top_k` | 4 | More passages raise recall and prompt cost together |
-| `min_coverage` | 0.5 | The refusal threshold — raise it to refuse more readily |
+| `min_coverage` | 0.5 | The refusal threshold; raise it to refuse more readily |
 | `min_score` | 0.0 | Similarity floor, off by default (see above); useful with a neural embedder |
 
 ## Layout
@@ -260,7 +260,7 @@ Dockerfile       the image Cloud Run serves
 deploy/gcp/      Terraform: Cloud Run, Artifact Registry, Secret Manager, keyless CI auth
 app_streamlit.py chat UI
 sample_docs/     three documents to try it against
-tests/           65 tests — chunking, retrieval, grounding, answering, end to end
+tests/           69 tests: chunking, retrieval, grounding, answering, end to end
 ```
 
 ## Licence
