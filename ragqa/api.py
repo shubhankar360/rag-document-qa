@@ -38,9 +38,16 @@ class AnswerOut(BaseModel):
     citations: list[CitationOut]
 
 
-def create_app(pipeline: RagPipeline | None = None) -> FastAPI:
+def create_app(pipeline: RagPipeline | None = None, index_root: Path | None = None) -> FastAPI:
+    """`index_root` turns on POST /index for paths inside that directory only.
+
+    Left as None, indexing over HTTP is off. Indexing an arbitrary server path
+    is harmless on localhost and a file-read hole on the internet: index
+    /etc/passwd, then ask about it, and the excerpts come back in citations.
+    """
     app = FastAPI(title="rag-document-qa", version="1.0.0")
     app.state.pipeline = pipeline or RagPipeline()
+    root = index_root.resolve() if index_root else None
 
     @app.get("/health")
     def health() -> dict:
@@ -54,7 +61,11 @@ def create_app(pipeline: RagPipeline | None = None) -> FastAPI:
 
     @app.post("/index")
     def index(request: IndexRequest) -> dict:
-        path = Path(request.path)
+        if root is None:
+            raise HTTPException(status_code=403, detail="indexing over HTTP is disabled on this server")
+        path = (root / request.path).resolve()  # resolve() follows symlinks and collapses ../
+        if not path.is_relative_to(root):
+            raise HTTPException(status_code=403, detail="path is outside the index root")
         if not path.exists():
             raise HTTPException(status_code=404, detail=f"no such path: {request.path}")
         return {"chunks": app.state.pipeline.index_path(path)}
